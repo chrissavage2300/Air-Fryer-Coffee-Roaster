@@ -12,6 +12,8 @@ Cooling and heating modes
 
 Change Log:
 
+The roaster does work, but it has a slight issue when it gets hot where the rotation motor just doesnt turn. From what I can tell, its not a failure of the motor, but a fail in the comms. I have to look into why it does this, as i think its a buffer situation. Everything else works though, so Im not sure why just that gives out. 
+
 10/7/2023- Uploaded Main Code
 
 12/3/2022- Start of this github. But the project dates back a few months atleast
