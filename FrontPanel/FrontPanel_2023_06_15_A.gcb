@@ -1,0 +1,560 @@
+//6/05/2023
+// Coffee Roaster Front Panel Program
+// GLCD is IL9486
+'''RA1 = TEMP SET POINT
+'''RA2 = FAN SPEED ANALOG
+'''RA3 = DRUM SPEED ANALOG
+'''RA7 = DRUM Start BUTTON
+'''RA6 = DRUM STOP BUTTON
+'''RC0 = ZERO TIME BUTTON
+'''RC1 = FIRST CRACK BUTTON
+'''RC2 = COOL MODE BUTTON
+'''RC3 = JOG (NOT USED)
+'''RC4 = DRUM START LIGHT
+'''RC5 = DRUM STOP LIGHT
+'''RC6 = RX
+'''RC7 = TX
+'''RB0 = GLCD SDO
+'''RB1 = GLCD SCK
+'''RB2 = GLCD SDI
+'''RB3 = GLCD DC
+'''RB4 = GLCD RESET
+'''RB5 = GLCD CS
+'''
+'''********************************************************************************
+
+#chip 18F26K83,64Mhz
+#CONFIG MCLRE=INTMCLR
+
+
+
+
+IO:
+#Define DRUM_START_BUTTON PORTA.7
+#Define DRUM_STOP_BUTTON  PORTA.6
+#Define ZERO_TIME_BUTTON  PORTC.0
+#Define FIRST_CRACK_BUTTON PORTC.1
+#Define COOL_MODE_BUTTON PORTC.2
+//NOT USED PORTC.3
+#Define DRUM_START_LIGHT  PORTC.4
+#Define DRUM_STOP_LIGHT PORTC.5
+
+#define USART_BAUD_RATE 9600
+#define USART_TX_BLOCKING
+//#define USART_BLOCKING
+DefaultUsartReturnValue=0
+GLCD:
+#include <glcd.h>
+#define GLCD_TYPE GLCD_TYPE_ILI9341
+
+#define GLCD_DC       PORTB.3           ' Data command line
+#define GLCD_CS       PORTB.5           ' Chip select line
+#define GLCD_RESET      PORTB.4           ' Reset line
+
+#define GLCD_DI       PORTB.0          ' Data OUT | MOSI
+#define GLCD_DO       PORTB.2          ' Data IN | MISO
+#define GLCD_SCK      PORTB.1          ' Clock Line
+
+#startup InitPPS, 85
+#define PPSToolPart 18f26k83
+
+    Sub InitPPS
+        #IFDEF ILI9341_HardwareSPI
+            UNLOCKPPS
+            RB2PPS = 0x001F    'SDO1 > RB0
+            RB1PPS = 0x001E    'SCK1 > RB1
+            SPI1SCKPPS = 0x0009    'RB1 > SCK1 (bi-directional)
+            //SPI1SDIPPS = 0x000A    'RB2 > SDI1
+            Dir PORTC.6 Out    ' Make TX1 pin an output
+            Dir PORTC.7 In    ' Make RX1 pin an input
+            'Module: UART1
+            RC6PPS = 0x0013    'TX1 > RC6
+            U1RXPPS = 0x0017    'RC7 > RX1
+
+            LOCKPPS
+        #ELSE
+            RB1PPS = 0
+            RB0PPS = 0
+        #ENDIF
+    End Sub
+    // Template comment at the end of the config file
+#define ILI9341_HardwareSPI
+DIR PORTA.1 IN
+DIR PORTA.2 IN
+DIR PORTA.3 IN
+DIR PORTA.7 IN
+DIR PORTA.6 IN
+DIR PORTC.0 IN
+DIR PORTC.1 IN
+DIR PORTC.2 IN
+DIR PORTC.3 IN
+DIR PORTC.4 OUT
+DIR PORTC.5 OUT
+
+GIE=1
+U1IE=1
+U1RXIE=1
+IntOn
+On Interrupt UART1ReceiveInterrupt Call USART_READ_DATA
+
+
+; ----- Variables
+Vars:
+Dim SETPOINT_RAW as Word
+Dim FANSPEED_RAW as Word
+Dim DRUMSPEED_RAW as Word
+Dim SetPoint_Scaled as Word
+Dim Fanspeed_Scaled as Word
+Dim DrumSpeed_Scaled as Word
+Dim Setpoint_Scaled_Old as Word
+Dim Fanspeed_Scaled_Old as Word
+Dim Drumspeed_Scaled_Old as Word
+
+
+//Button Vars. Repeat Structure below as needed
+Dim DrumStartButton_Pushed as BIT
+Dim DrumCounter as Byte
+DrumCounter=0xFF
+//
+Dim DrumStopButton_Pushed as BIT
+Dim DrumStopCounter as Byte
+DrumStopCounter=0xFF
+//
+Dim ZeroTime_Pushed as BIT
+Dim ZeroTimeCounter as Byte
+ZeroTimeCounter=0xFF
+//
+Dim FirstCrack_Pushed as BIT
+Dim FirstCrackCounter as Byte
+FirstCrackCounter=0xFF
+//
+Dim CoolMode_Pushed as BIT
+Dim CoolModeCounter as Byte
+CoolModeCounter=0xFF
+
+//Strings:
+Dim Setpoint_String as String * 4
+Dim FanSetpoint_String as String * 4
+Dim DrumSpeed_String as String * 4
+Dim CurrentTemp_Int as Word
+Dim CurrentTemp_String as String * 4
+Dim CurrentTime_Int as Word
+Dim CurrentTime_String as String * 4
+Dim ZeroTime_String as String * 4
+Dim USART_CurrentTime as Word
+Dim USART_CurrentTemp as Word
+Dim USART_ZeroTime as Word
+
+
+USARTBuffer:
+
+Dim Buffer(MaxMessageLength) as byte
+Dim Counter as byte
+Counter = 0
+Dim BufferWrite as Byte
+Dim BufferSearchCounterByte as byte
+Dim NumberSearchCounterByte as Byte
+Dim FoundLocation as Byte
+Dim ConvertedNumber(3) as Byte
+Dim TempNumber as Word
+Dim ConvertNumberLoopCnt as byte
+Dim TempNumber1 as Word
+Dim TempNumber2 as Byte
+Dim TempNumber3 as Byte
+Dim TempNumber4 as Byte
+Dim TempNumber5 as Byte
+Dim ClearBuffer as Byte
+#define MaxMessageLength 8
+TempNumber=0
+Dim MessagePending as Bit
+
+DIM USART_CURRENTTEMP_TEMP1 as Word
+DIM USART_CURRENTTEMP_TEMP2 as Byte
+DIM USART_CURRENTTEMP_TEMP3 as Word
+
+
+
+Dim USART_CurrentTime_Temp1 as Byte
+Dim USART_CurrentTime_Temp2 as Byte
+Dim USART_CurrentTime_Temp3 as Word //Needed or else this overflows
+
+
+Dim USART_CurrentTime_TempA as Byte
+Dim USART_CurrentTime_TempB as Byte
+Dim USART_CurrentTime_TempC as Word
+
+Dim USART_ZeroTime_TempA as Byte
+Dim USART_ZeroTime_TempB as Byte
+Dim USART_ZeroTime_TempC as Word
+
+Dim USART_ZeroTime_Temp1 as Byte
+Dim USART_ZeroTime_Temp2 as Byte
+Dim USART_ZeroTime_Temp3 as Word
+
+
+
+
+dim GotA as bit
+dim GotT as bit
+dim memset_i as byte
+
+//NOTE USED http://www.barth-dev.de/online/rgb565-color-picker/
+//or//RGB565 picker
+//GLCDCLS ( 0x4410 ) //kind of a dark grey
+//wait 3 s
+GLCDCLS ( 0x8618)
+
+GLCDRotate(Landscape_REV)
+GLCDfntDefaultSize = 2
+//GLCDBackground=0x4410
+//FilledBox(0,0,170,70,0x4410)
+GLCDPrint (5,25, "Current: ", TFT_BLACK)
+GLCDPrint (5,50, "SP: ", TFT_BLACK)
+GLCDPrint (5,5, "Temperatures", TFT_BLACK)
+
+//GLCDPrint (128,0, "F", TFT_RED)
+//GLCDPrint (0,64, "DRUM SPEED: ", TFT_BLACK)
+//GLCDPrint (256,64, "RPM", TFT_BLACK)
+//GLCDBackground=0x8618
+
+//FilledBox(190,0,320,70,0x4410)
+//GLCDBackground=0x8618 // standard background
+GLCDPrint (0,77, "DRUM SPEED: ", TFT_BLACK)
+GLCDPrint (190,77, "RPM", TFT_BLACK)
+GLCDPrint (0,100, "FAN SPEED: ", TFT_BLUE)
+GLCDPrint (190,100, "%", TFT_BLUE)
+
+//GLCDBackground=0x4410//
+
+GLCDPrint (195,0, "Time: ", TFT_BLACK)
+GLCDPrint (195,25, "FC: ", TFT_BLACK)
+//GLCDPrint (195,50, "CT: ", TFT_BLACK)
+
+
+//Start Program
+Main:
+//wait 1 s
+
+do
+
+AnalogReads:
+
+
+  SETPOINT_RAW=ReadAD12(AN1)
+  FANSPEED_RAW=ReadAD12(AN2)
+  DRUMSPEED_RAW=ReadAD12(AN3)
+  //Scale Set Point, 0 to 500F
+  SetPoint_Scaled=scale(SETPOINT_RAW,0,4096,0,500)//
+  Setpoint_String=StrInteger(SetPoint_Scaled)
+  //Scale Fan Speed 0 to 100%
+  Fanspeed_Scaled=scale(FANSPEED_RAW,0,4096,0,100)
+  FanSetpoint_String=StrInteger(Fanspeed_Scaled)
+  //Scale Drum Speed 0 to 100 RPM (can go to 120)
+  DrumSpeed_Scaled=scale(DRUMSPEED_RAW,0,4096,0,100)
+  DrumSpeed_String=StrInteger(DrumSpeed_Scaled)
+
+
+
+'CurrentTime_String=StrInteger(USART_CurrentTime)
+
+
+//GLCDBackground=0x4410//box background
+//SHOW SET POINT
+GLCDPrint(47, 50,leftpad(Setpoint_String,3,"0"),TFT_RED )
+
+
+
+
+//GLCDBackground=0x8618
+//GLCDPrint(150, 100,leftpad(FanSetpoint_String,3,"0"),TFT_BLUE )
+GLCDPrint(150, 100,FanSetpoint_String,TFT_BLUE )
+//GLCDBackground=0x8618
+//GLCDPrint(150, 77,leftpad(DrumSpeed_String,3,"0"),TFT_NAVY )
+GLCDPrint(150, 77,DrumSpeed_String,TFT_NAVY )
+//GLCDBackground=0x4410//box background
+
+
+//GLCDBackground=0x8618
+//GLCDBackground=0x4410
+//REMINDER ALL BUTTONS ARE PULLED HIGH. Look for Low signal.
+PushbuttonLogic:
+
+
+  if DRUM_START_BUTTON = 0 then
+
+    DrumCounter=FNLSL(0,1) //left shift bits to wait for them all to clear
+    //This basically serves as a debouncer
+
+      if DrumCounter = 0x00 then
+        DrumStartButton_Pushed=1
+
+      end if
+
+  Else
+    DrumStartButton_Pushed=0
+  end if
+
+  if DrumStartButton_Pushed=1 then
+    //FilledBox(0,128,32,160,TFT_DARKGREY)
+    HSerPrint("XRON")
+
+     //GLCDBackground=0x8618
+     GLCDPrint (0,125, "DRUM STARTED", TFT_DARKGREEN)
+     //GLCDBackground=0x4410
+    DrumStartButton_Pushed=0
+  else
+      //FilledBox(0,128,32,160,TFT_LIGHTGREY)
+
+  end if
+
+
+DrumStop:
+  if DRUM_STOP_BUTTON = 0 then
+
+    DrumStopCounter =FNLSL(0,1) //left shift bits to wait for them all to clear
+    //This basically serves as a debouncer
+
+      if DrumStopCounter  = 0x00 then
+        DrumStopButton_Pushed=1
+      end if
+
+  Else
+    DrumStopButton_Pushed=0
+  end if
+
+  if DrumStopButton_Pushed=1 then
+    //FilledBox(0,128,32,160,TFT_DARKGREY)
+    HSerPrint("XROF")
+
+     //GLCDBackground=0x8618
+     GLCDPrint (0,125, "DRUM STOPPED   ", TFT_RED)
+     //GLCDBackground=0x4410
+    DrumStopButton_Pushed=0
+  else
+      //FilledBox(0,128,32,160,TFT_LIGHTGREY)
+
+  end if
+
+ZeroTime:
+  if ZERO_TIME_BUTTON = 0 then
+
+    ZeroTimeCounter =FNLSL(0,1) //left shift bits to wait for them all to clear
+    //This basically serves as a debouncer
+
+      if ZeroTimeCounter  = 0x00 then
+        ZeroTime_Pushed=1
+      end if
+
+  Else
+    ZeroTime_Pushed=0
+  end if
+
+  if ZeroTime_Pushed=1 then
+    //FilledBox(0,128,32,160,TFT_DARKGREY)
+    HSerPrint("XZER")
+    ZeroTime_Pushed=0
+
+  else
+      //FilledBox(0,128,32,160,TFT_LIGHTGREY)
+
+  end if
+FirstCrack://NOT SUPPORTED YET. ADD TO BASE CODE.
+
+  if FIRST_CRACK_BUTTON = 0 then
+
+    FirstCrackCounter =FNLSL(0,1) //left shift bits to wait for them all to clear
+    //This basically serves as a debouncer
+
+      if FirstCrackCounter  = 0x00 then
+        FirstCrack_Pushed=1
+      end if
+
+  Else
+    FirstCrack_Pushed=0
+  end if
+
+  if FirstCrack_Pushed=1 then
+
+    HSerPrint("XFCZ")
+    ZeroTime_String=StrInteger(CurrentTime_Int)
+    GLCDPrint (240,25, ZeroTime_String, TFT_BLUE) //first crack place holder
+     GLCDPrint(195, 50, "FC Hit", TFT_RED)
+    FirstCrack_Pushed =0
+  else
+      //FilledBox(0,128,32,160,TFT_LIGHTGREY)
+
+  end if
+
+CoolMode:
+
+  if COOL_MODE_BUTTON = 0 then
+
+    CoolModeCounter =FNLSL(0,1) //left shift bits to wait for them all to clear
+    //This basically serves as a debouncer
+
+      if CoolModeCounter=0x00 then
+        CoolMode_Pushed=1
+      end if
+
+  Else
+    CoolMode_Pushed=0
+  end if
+
+  if CoolMode_Pushed=1 then
+    //FilledBox(0,128,32,160,TFT_DARKGREY)
+    HSerPrint("XCOL")
+
+      //GLCDBackground=0x8618
+     GLCDPrint (0,150, "COOLING MODE", TFT_BLUE)
+    // GLCDBackground=0x4410
+  CoolMode_Pushed=0
+
+  else
+
+
+  end if
+
+Setpoint_Print:
+
+//Print Out the Setpoint
+//check if old data is NOT equal to new data. This is a supressing function
+//without this function data would be sent wildly.
+  if SetPoint_Scaled <> Setpoint_Scaled_Old then
+    HSerPrint("S")
+    HSerPrint(SetPoint_Scaled)
+    Setpoint_Scaled_Old=SetPoint_Scaled
+  end if
+
+
+  If Fanspeed_Scaled <> Fanspeed_Scaled_Old then
+    HSerPrint("F")
+    HSerPrint("0")
+    HSerPrint(Fanspeed_Scaled)
+    Fanspeed_Scaled_Old=Fanspeed_Scaled
+
+  End if
+
+  If DrumSpeed_Scaled <> Drumspeed_Scaled_Old then
+    HSerPrint("D")
+    HSerPrint("0")
+    HSerPrint(DrumSpeed_Scaled)
+    Drumspeed_Scaled_Old = DrumSpeed_Scaled
+
+  End if
+
+
+CheckA:
+  if GotA=1 then//this checks to see if we got the current temperature via the function below
+      //GLCDPrint(200, 200 ,"GOT",TFT_RED )
+      GotA =0
+      //110,25
+      USART_CURRENTTEMP_TEMP3=TempNumber3-48
+      USART_CURRENTTEMP_TEMP2=10*(TempNumber2-48)
+      USART_CURRENTTEMP_TEMP1=100*(TempNumber1-48)
+
+     CurrentTemp_Int = USART_CURRENTTEMP_TEMP1 + USART_CURRENTTEMP_TEMP2 + USART_CURRENTTEMP_TEMP3
+     CurrentTemp_String=StrInteger(CurrentTemp_Int)
+     GLCDPrint(110, 25,leftpad(CurrentTemp_String,3,"0"),TFT_RED )
+
+
+  end if
+
+//this function checks to see if we got the current time
+  if GotT=1 then
+    GotT=0
+    USART_CurrentTime_TempA=(USART_CurrentTime_Temp3-48)
+    USART_CurrentTime_TempB=10*(USART_CurrentTime_Temp2-48)
+    USART_CurrentTime_TempC=100*(USART_CurrentTime_Temp1-48)
+    CurrentTime_Int = USART_CurrentTime_TempA+USART_CurrentTime_TempB+USART_CurrentTime_TempC
+    CurrentTime_String = StrInteger (CurrentTime_Int)
+    GLCDPrint(260, 0,leftpad(CurrentTime_String,3,"0"),TFT_BLUE )
+
+
+
+
+  end if
+      //top row
+'    GLCDPrint(20, 160 ,(Buffer(0)),TFT_RED )
+'    GLCDPrint(80, 160 ,(Buffer(1)),TFT_RED )
+'    GLCDPrint(120, 160 ,(Buffer(2)),TFT_RED )
+'    GLCDPrint(160, 160 ,(Buffer(3)),TFT_RED )
+'    //2nd row
+'    GLCDPrint(20, 200, (Buffer(4)),TFT_RED ) //should show 97
+'    GLCDPrint(80, 200 ,(Buffer(5)),TFT_RED ) //hundreds digit
+'    GLCDPrint(120, 200, (Buffer(6)),TFT_RED ) //tens
+'    GLCDPrint(160, 200, (Buffer(7)),TFT_RED ) //ones
+
+MessagePending:
+  if MessagePending = 1 then
+
+
+    //this is a custom search function that looks for a certain string. It looks
+    //through the whole array. Once found, it then spits out the following 4 characters
+    //which are numbers. Var Buffer contains the message
+    //current temp is aNNN
+    //current time is tNNN
+    //where N are the 3 digits
+
+    //this function looks for the current temp from the controller
+
+    //This first search looks for the temperature coming from the controller
+
+    for BufferSearchCounterByte = 0 to 7
+      if Buffer(BufferSearchCounterByte)=97 then //97 is a
+        GotA =1
+        TempNumber1=Buffer(BufferSearchCounterByte+1) //
+        TempNumber2=Buffer(BufferSearchCounterByte+2) //
+        TempNumber3=Buffer(BufferSearchCounterByte+3) //
+'        GLCDPrint(20, 120 ,TempNumber1,TFT_RED )
+'        GLCDPrint(80, 120 ,TempNumber2,TFT_RED )
+'        GLCDPrint(120, 120 ,TempNumber3,TFT_RED )
+      end if // end "a" search function
+
+
+
+
+      if Buffer(BufferSearchCounterByte)=116 then //116 is t
+        GotT =1
+        USART_CurrentTime_Temp1=Buffer(BufferSearchCounterByte+1) //hundreds
+        USART_CurrentTime_Temp2=Buffer(BufferSearchCounterByte+2) //tens
+        USART_CurrentTime_Temp3=Buffer(BufferSearchCounterByte+3) //ones
+'        GLCDPrint(20, 120 ,USART_CurrentTime_Temp1,TFT_RED )
+'        GLCDPrint(80, 120 ,USART_CurrentTime_Temp2,TFT_RED )
+'        GLCDPrint(120, 120 ,USART_CurrentTime_Temp3,TFT_RED )
+
+        end if //end "t" search function
+
+
+      next // end search loop
+
+      MessagePending=0    //clear message pending bit
+  end if// end message pending loop
+
+//End main loop
+loop
+
+
+
+
+BufferReadCode:
+
+Sub USART_READ_DATA
+IntOff
+Buffer(Counter) = HSerReceive
+Counter = Counter + 1
+
+if Counter =MaxMessageLength then
+  Counter = 0
+
+end if
+
+'
+'  for Counter = 0 to MaxMessageLength //read UART up to max message length
+'    Buffer(Counter) = HSerReceive
+'    wait 5 ms
+'
+'  next
+
+MessagePending=1
+IntOn
+End Sub
